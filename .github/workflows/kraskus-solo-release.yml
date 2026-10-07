@@ -1,0 +1,121 @@
+# Kraskus-Common-Foundry-Solo: reproducible build, tests and signed pre-release.
+# Not upstream. Upstream workflows in this directory are disabled in this
+# repository's Actions settings; only this workflow runs.
+name: Kraskus solo build
+
+on:
+  push:
+    branches: [main]
+    tags: ['kraskus-solo-v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kraskus-solo-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CMFD_BUILD_SOURCE_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Upstream base is the pinned v1.0.8 commit
+        run: git merge-base --is-ancestor 3aa5369512f47d0b3c49a49a54a0395e71e0c000 HEAD
+      - name: Tests and lints in the pinned toolchain image
+        run: |
+          image=$(grep '^TOOLCHAIN_IMAGE=' KRASKUS/build/PINS | cut -d= -f2)
+          docker run --rm -v "$PWD:/src" -w /src -e CMFD_BUILD_SOURCE_COMMIT "$image" bash -c '
+            set -e
+            rustup component add rustfmt clippy
+            cargo fmt --all --check
+            cargo clippy --locked -p cmfd-node --features production-mainnet --bin cmfd-node --tests -- -D warnings
+            cargo test --locked -p cmfd-node --features production-mainnet --bin cmfd-node
+          '
+
+  build:
+    strategy:
+      matrix:
+        run: [a, b]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Reproducible build (${{ matrix.run }})
+        run: CARGO_BUILD_JOBS=4 bash KRASKUS/build/build.sh out
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kraskus-solo-build-${{ matrix.run }}
+          path: out/
+          if-no-files-found: error
+
+  reproducibility:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: kraskus-solo-build-*
+      - name: Both builds are byte-identical
+        run: |
+          a=$(sha256sum kraskus-solo-build-a/cmfd-node | cut -d' ' -f1)
+          b=$(sha256sum kraskus-solo-build-b/cmfd-node | cut -d' ' -f1)
+          echo "build a: $a"; echo "build b: $b"
+          test "$a" = "$b"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/kraskus-solo-v')
+    needs: [test, reproducibility]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: kraskus-solo-build-a
+          path: artifact
+      - name: Package
+        run: |
+          V=${GITHUB_REF_NAME#kraskus-solo-v}
+          D=kraskus-cmfd-node-solo-$V-linux-x86_64
+          mkdir -p release/$D
+          cp artifact/cmfd-node artifact/BUILD-INFO.json artifact/MAINNET-LAUNCH-INFO.json artifact/VERSION.txt artifact/KRASKUS-PATCH.diff release/$D/
+          cp LICENSE THIRD_PARTY_NOTICES.md KRASKUS/README.md KRASKUS/VERIFY.md release/$D/
+          chmod 0755 release/$D/cmfd-node
+          (cd release && tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@$(git log -1 --format=%ct) -czf $D.tar.gz $D)
+          (cd release && sha256sum $D.tar.gz $D/cmfd-node $D/KRASKUS-PATCH.diff > SHA256SUMS && cat SHA256SUMS)
+      - name: Sign SHA256SUMS (Ed25519, protected environment secret)
+        env:
+          SIGNING_KEY: ${{ secrets.KRASKUS_SOLO_RELEASE_SIGNING_KEY }}
+        run: |
+          pub=$(cat KRASKUS/kraskus-solo-release.pub)
+          case "$pub" in ssh-ed25519\ *) ;; *) echo 'KRASKUS/kraskus-solo-release.pub is not an Ed25519 public key yet'; exit 1;; esac
+          test -n "$SIGNING_KEY" || { echo 'signing secret missing'; exit 1; }
+          umask 077
+          key=$(mktemp -p "$RUNNER_TEMP")
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          ssh-keygen -Y sign -f "$key" -n kraskus-common-foundry-solo-release release/SHA256SUMS
+          rm -f "$key"
+          printf 'kraskus-common-foundry-solo-release namespaces="kraskus-common-foundry-solo-release" %s\n' "$pub" > "$RUNNER_TEMP/allowed_signers"
+          ssh-keygen -Y verify -f "$RUNNER_TEMP/allowed_signers" -I kraskus-common-foundry-solo-release \
+            -n kraskus-common-foundry-solo-release -s release/SHA256SUMS.sig < release/SHA256SUMS
+      - name: GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/SHA256SUMS release/SHA256SUMS.sig \
+            --prerelease --verify-tag \
+            --title "Kraskus Common Foundry Solo $GITHUB_REF_NAME (Dev/experimental)" \
+            --notes "Experimental Kraskus build of the official Common Foundry v1.0.8 node (MIT, upstream 3aa5369) with the Kraskus solo endpoint. Not qualified for production. Diff: KRASKUS-PATCH.diff. Verify: KRASKUS/VERIFY.md. Reproducible: KRASKUS/BUILD.md."

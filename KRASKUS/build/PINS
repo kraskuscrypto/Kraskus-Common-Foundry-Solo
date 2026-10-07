@@ -1,0 +1,5 @@
+UPSTREAM_REPOSITORY=https://github.com/Common-Foundry-1/CommonFoundry
+UPSTREAM_TAG=v1.0.8
+UPSTREAM_COMMIT=3aa5369512f47d0b3c49a49a54a0395e71e0c000
+TOOLCHAIN_IMAGE=rust@sha256:cf9dd0ec73e75f827fe59123fff9dc65af1a1c8363c3c31ee8d7f8ad0b6a5fb2
+TOOLCHAIN_TAG=rust:1.94.1-slim-bookworm
