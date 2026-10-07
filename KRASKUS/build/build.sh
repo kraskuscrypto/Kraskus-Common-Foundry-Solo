@@ -5,7 +5,8 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 out="${1:?output directory}"
 mkdir -p "$out"
-out="$(cd "$out" && pwd)"
+# `pwd -W` gives a Docker-usable path under Git Bash on Windows.
+out="$(cd "$out" && (pwd -W 2>/dev/null || pwd))"
 image="$(grep '^TOOLCHAIN_IMAGE=' "$root/KRASKUS/build/PINS" | cut -d= -f2)"
 commit="$(git -C "$root" rev-parse HEAD)"
 docker run --rm \
