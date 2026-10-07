@@ -1093,6 +1093,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "k256",
+ "kraskus-cmfd-prover-wire",
  "libc",
  "primitive-types",
  "rcgen",
@@ -3392,6 +3393,34 @@ name = "konst_macro_rules"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
+
+[[package]]
+name = "kraskus-cmfd-prover"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "cmfd-consensus",
+ "cmfd-node",
+ "hex",
+ "kraskus-cmfd-prover-wire",
+ "rcgen",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "kraskus-cmfd-prover-wire"
+version = "0.1.0"
+dependencies = [
+ "cmfd-consensus",
+ "hex",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "lazy_static"

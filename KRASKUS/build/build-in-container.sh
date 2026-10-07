@@ -23,6 +23,7 @@ export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 export RUSTFLAGS="--remap-path-prefix=/src=/build/commonfoundry --remap-path-prefix=/usr/local/cargo=/cargo"
 
 cargo build --release --locked -p cmfd-node --features production-mainnet --bin cmfd-node
+cargo build --release --locked -p kraskus-cmfd-prover --features production-mainnet --bin kraskus-cmfd-prover
 
 # Upstream mainnet identity check (same assertions as upstream's
 # mainnet-sync-recovery workflow), run against the binary just built.
@@ -40,9 +41,11 @@ print('mainnet launch identity: OK')
 PY
 /target/release/cmfd-node --version | tee /out/VERSION.txt
 /target/release/cmfd-node run --help | grep -q -- '--solo-pool-bind'
+/target/release/kraskus-cmfd-prover --version | tee -a /out/VERSION.txt
 
 cp /target/release/cmfd-node /out/cmfd-node
-chmod 0755 /out/cmfd-node
+cp /target/release/kraskus-cmfd-prover /out/kraskus-cmfd-prover
+chmod 0755 /out/cmfd-node /out/kraskus-cmfd-prover
 git diff "$UPSTREAM_COMMIT" HEAD -- . ':(exclude)KRASKUS' ':(exclude).github/workflows/kraskus-*' > /out/KRASKUS-PATCH.diff
 python3 - "$CMFD_BUILD_SOURCE_COMMIT" "$UPSTREAM_COMMIT" "$SOURCE_DATE_EPOCH" <<'PY'
 import json, subprocess, sys
@@ -59,5 +62,5 @@ info = {
 json.dump(info, open('/out/BUILD-INFO.json', 'w'), indent=2, sort_keys=True)
 PY
 cd /out
-sha256sum cmfd-node KRASKUS-PATCH.diff > SHA256SUMS
+sha256sum cmfd-node kraskus-cmfd-prover KRASKUS-PATCH.diff > SHA256SUMS
 cat SHA256SUMS

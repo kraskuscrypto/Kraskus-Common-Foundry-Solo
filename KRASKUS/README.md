@@ -10,19 +10,19 @@ It exists only because v1.0.8 has no official solo mode for `cmfd-miner`: mainne
 
 ## What the Kraskus change does
 
-All Kraskus code is in [`crates/cmfd-node/src/kraskus_solo.rs`](../crates/cmfd-node/src/kraskus_solo.rs), plus a short hook in `crates/cmfd-node/src/main.rs`: 25 added lines and one changed line, the `--version` string. See [PATCH.md](PATCH.md) for the reviewed diff.
+Kraskus code lives in four places: the node modules [`kraskus_solo.rs`](../crates/cmfd-node/src/kraskus_solo.rs) and [`kraskus_remote.rs`](../crates/cmfd-node/src/kraskus_remote.rs), the prover protocol crate [`kraskus-cmfd-prover-wire`](../crates/kraskus-cmfd-prover-wire), and the prover service [`kraskus-cmfd-prover`](../crates/kraskus-cmfd-prover). Upstream files change only by a short hook in `crates/cmfd-node/src/main.rs` (module declarations, one option group, spawn/stop, and the `--version` string), one dependency line in `crates/cmfd-node/Cargo.toml`, the two new workspace members in `Cargo.toml`, and the resulting `Cargo.lock` entries. See [PATCH.md](PATCH.md) for the reviewed diff.
 
 - **New options on `run`, all off by default:**
   - `--solo-pool-bind <private address>`, `--solo-pool-certificate`, `--solo-pool-private-key` (from upstream `pool-certificate`)
   - `--solo-pool-miner <64-hex>`: optional; defaults to the node wallet
-  - `--solo-pool-replay-worker`, `--solo-pool-proof-worker`, `--solo-pool-scratch`: the official ProductionV4 workers
-  - `--solo-pool-status-file`, `--solo-pool-retry-seconds`
+  - `--solo-pool-remote-prover <cmfd-prover+tls://IP:port?pin=…>` or `--solo-pool-remote-prover-file <path>` (re-read every 10 s, so pairing needs no restart), with `--solo-pool-prover-client-certificate` / `--solo-pool-prover-client-key`: the Kraskus prover (see [REMOTE-PROVER.md](REMOTE-PROVER.md)); a GPU on the same machine uses a prover on loopback
+  - `--solo-pool-status-file`, `--solo-pool-snapshot-file`, `--solo-pool-retry-seconds`
   - optionally `--solo-pool-dashboard-bind`, `--solo-pool-dashboard-assets`, `--solo-pool-public-url`: the upstream read-only dashboard and its `/api/v1/pool` worker statistics, on loopback
 - **It runs the unmodified upstream `spawn_pool_server`, configured for one solo operator:**
   - The coinbase pays the operator's address.
   - No payout ledger on disk, no PPLNS, no payout transactions, no fee.
-  - The share target equals the network target, so only block-winning nonces are submitted, then fully replayed and proven by the official workers before the block is accepted and relayed.
-- **No prover, no jobs.** The endpoint listens only after the official replay and proof workers have started and reported ready. If they are missing or fail, which happens when the GPU or the proving data is missing, the node keeps running with RPC, P2P, wallet and explorer, but no miner can connect. The status file reports `prover_unavailable` with the reason, and the node retries.
+  - The share target equals the network target, so only block-winning nonces are submitted, then fully replayed and proven by the official workers on the Kraskus prover before the block is accepted and relayed.
+- **No prover, no jobs.** The endpoint listens only while **Solo Prover Ready** holds: prover connected and mutually authenticated, GPU memory ≥ 16 GiB, all eight proving-data files verified by size and SHA-256, both official workers pinned and READY, and a proof self-test **verified by this node** with upstream `verify_evaluation`, at most 24 h old and completed within **30 s**. Any failure, including a failed evaluation, closes the endpoint until a new self-test passes. The node itself keeps running with RPC, P2P, wallet and explorer; the status file reports `prover_unavailable` with the reason.
 - **`--version` reports `1.0.8+kraskus-solo.1`.**
 
 **Not changed:** consensus, the PoW algorithm, block assembly, proof generation and verification, the wire protocol (TLS 1.3 with an exact certificate pin, protocol v2), the mainnet launch identity, the `pool-serve` command, and every other upstream path. Use the official `cmfd-miner` unchanged:

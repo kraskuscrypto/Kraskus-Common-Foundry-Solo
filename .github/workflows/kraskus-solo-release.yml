@@ -38,7 +38,9 @@ jobs:
             rustup component add rustfmt clippy
             cargo fmt --all --check
             cargo clippy --locked -p cmfd-node --features production-mainnet --bin cmfd-node --tests -- -D warnings
+            cargo clippy --locked -p kraskus-cmfd-prover-wire -p kraskus-cmfd-prover --features kraskus-cmfd-prover/production-mainnet --all-targets -- -D warnings
             cargo test --locked -p cmfd-node --features production-mainnet --bin cmfd-node
+            cargo test --locked -p kraskus-cmfd-prover-wire -p kraskus-cmfd-prover --features kraskus-cmfd-prover/production-mainnet
           '
 
   build:
@@ -70,10 +72,12 @@ jobs:
         run: |
           set -euo pipefail
           for r in a b; do (cd kraskus-solo-build-$r && sha256sum -c SHA256SUMS); done
-          a=$(sha256sum kraskus-solo-build-a/cmfd-node | cut -d' ' -f1)
-          b=$(sha256sum kraskus-solo-build-b/cmfd-node | cut -d' ' -f1)
-          echo "build a: $a"; echo "build b: $b"
-          test -n "$a" && test "$a" = "$b"
+          for f in cmfd-node kraskus-cmfd-prover; do
+            a=$(sha256sum kraskus-solo-build-a/$f | cut -d' ' -f1)
+            b=$(sha256sum kraskus-solo-build-b/$f | cut -d' ' -f1)
+            echo "$f build a: $a"; echo "$f build b: $b"
+            test -n "$a" && test "$a" = "$b"
+          done
           cmp kraskus-solo-build-a/SHA256SUMS kraskus-solo-build-b/SHA256SUMS
           cmp kraskus-solo-build-a/KRASKUS-PATCH.diff kraskus-solo-build-b/KRASKUS-PATCH.diff
 
@@ -101,6 +105,7 @@ jobs:
           set -euo pipefail
           for r in a b; do (cd kraskus-solo-build-$r && sha256sum -c SHA256SUMS); done
           cmp kraskus-solo-build-a/cmfd-node kraskus-solo-build-b/cmfd-node
+          cmp kraskus-solo-build-a/kraskus-cmfd-prover kraskus-solo-build-b/kraskus-cmfd-prover
           grep -q "\"source_commit\": \"$GITHUB_SHA\"" kraskus-solo-build-a/BUILD-INFO.json
       - name: Package
         run: |
@@ -109,12 +114,12 @@ jobs:
           V=${GITHUB_REF_NAME#kraskus-solo-v}
           D=kraskus-cmfd-node-solo-$V-linux-x86_64
           mkdir -p release/$D
-          cp $A/cmfd-node $A/BUILD-INFO.json $A/MAINNET-LAUNCH-INFO.json $A/VERSION.txt $A/KRASKUS-PATCH.diff release/$D/
+          cp $A/cmfd-node $A/kraskus-cmfd-prover $A/BUILD-INFO.json $A/MAINNET-LAUNCH-INFO.json $A/VERSION.txt $A/KRASKUS-PATCH.diff release/$D/
           cp LICENSE THIRD_PARTY_NOTICES.md KRASKUS/README.md KRASKUS/VERIFY.md release/$D/
-          chmod 0755 release/$D/cmfd-node
+          chmod 0755 release/$D/cmfd-node release/$D/kraskus-cmfd-prover
           (cd release && tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@$(git log -1 --format=%ct) -czf $D.tar.gz $D)
-          (cd release && sha256sum $D.tar.gz $D/cmfd-node $D/KRASKUS-PATCH.diff > SHA256SUMS && cat SHA256SUMS)
-          test "$(sha256sum release/$D/cmfd-node | cut -d' ' -f1)" = "$(sha256sum $A/cmfd-node | cut -d' ' -f1)"
+          (cd release && sha256sum $D.tar.gz $D/cmfd-node $D/kraskus-cmfd-prover $D/KRASKUS-PATCH.diff > SHA256SUMS && cat SHA256SUMS)
+          cmp release/$D/cmfd-node $A/cmfd-node && cmp release/$D/kraskus-cmfd-prover $A/kraskus-cmfd-prover
       - name: Sign SHA256SUMS (Ed25519, protected environment secret; fail closed)
         env:
           SIGNING_KEY: ${{ secrets.KRASKUS_SOLO_RELEASE_SIGNING_KEY }}

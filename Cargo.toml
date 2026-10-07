@@ -9,6 +9,9 @@ members = [
     "crates/cmfd-node",
     "crates/cmfd-proof-accel",
     "crates/cmfd-proof-worker",
+    # Kraskus-Common-Foundry-Solo (not upstream):
+    "crates/kraskus-cmfd-prover",
+    "crates/kraskus-cmfd-prover-wire",
 ]
 exclude = [
     "fuzz",

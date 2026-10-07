@@ -1,6 +1,6 @@
-# Remote LAN GPU prover: boundary and protocol (DESIGN, not implemented)
+# Remote LAN GPU prover: boundary and protocol
 
-**Status:** design for owner review, 2026-10-07. Nothing in this document is built yet.
+**Status (2026-10-07):** implemented per this design (owner-approved), Dev/experimental. Code: `crates/kraskus-cmfd-prover-wire`, `crates/kraskus-cmfd-prover`, `crates/cmfd-node/src/kraskus_remote.rs`. Fail-closed tests pass; the real GPU self-test is still pending (see [QUALIFICATION.md](QUALIFICATION.md)).
 
 **Goal:** the Common Foundry node, for example on 5tratumOS, stays GPU-independent. The replay and proof work needed for a winning block runs on a separate GPU machine on the LAN.
 

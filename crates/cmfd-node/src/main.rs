@@ -77,6 +77,7 @@ use serde_json::json;
 use zeroize::Zeroizing;
 
 // Kraskus-Common-Foundry-Solo: solo endpoint for `run` (not upstream).
+mod kraskus_remote;
 mod kraskus_solo;
 
 const SERVICE_SUPERVISION_POLL: Duration = Duration::from_millis(50);

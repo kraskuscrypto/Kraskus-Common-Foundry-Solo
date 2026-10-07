@@ -12,8 +12,12 @@ Every release also ships this diff as `KRASKUS-PATCH.diff`, and its hash is list
 
 | File | Change |
 |---|---|
-| `crates/cmfd-node/src/kraskus_solo.rs` | **New.** The `run` options for the solo endpoint, the solo configuration of the upstream pool server, the start-up supervisor (no listener until the official workers are ready; retries), the status file, and tests. |
-| `crates/cmfd-node/src/main.rs` | `mod kraskus_solo;`; one flattened option group on `run`; spawn after the RPC starts; startup JSON key `kraskus_solo_pool`; supervision and orderly stop; `--version` reads `1.0.8+kraskus-solo.1`. 25 lines added, 1 changed. |
+| `crates/cmfd-node/src/kraskus_solo.rs` | **New.** The `run` options, the solo configuration of the upstream pool server, the supervisor (prover pairing, heartbeat, self-test, open/close the endpoint), status and snapshot files, tests. |
+| `crates/cmfd-node/src/kraskus_remote.rs` | **New.** Node-side prover client; `RemoteVerifier` implements the upstream `ProductionV4PoolShareVerifier`; node-side self-test verification; the fail-closed readiness assessment; tests. |
+| `crates/kraskus-cmfd-prover-wire/` | **New crate.** Protocol messages, framing limits, TLS 1.3 with mutual exact pinning, private-address rules; transactions and proofs in the upstream consensus wire codec. |
+| `crates/kraskus-cmfd-prover/` | **New crate.** The prover service: proving-data and worker-pin verification, GPU report, the unmodified upstream `ProductionV4PersistentPoolVerifier` with the official workers. |
+| `crates/cmfd-node/src/main.rs` | `mod kraskus_remote; mod kraskus_solo;`; one flattened option group on `run`; spawn after the RPC starts; startup JSON key `kraskus_solo_pool`; supervision and orderly stop; `--version` reads `1.0.8+kraskus-solo.1`. |
+| `crates/cmfd-node/Cargo.toml`, `Cargo.toml`, `Cargo.lock` | One path dependency on the wire crate; two workspace members; the matching lock entries. No new third-party crates. |
 | `KRASKUS/**`, `.github/workflows/kraskus-solo-release.yml` | Documentation, reproducible build and the signed-release workflow. These are not compiled into the binary. |
 
 ## What the solo configuration sets
@@ -31,7 +35,7 @@ Every release also ships this diff as `KRASKUS-PATCH.diff`, and its hash is list
 | `allow_public_clients` | `false` | Miners must connect from private or loopback addresses. This is the upstream default. |
 | `allow_address_only_payouts` | `false` | Upstream default. |
 
-The official ProductionV4 replay and proof workers are configured by the upstream helper `configure_production_v4_pool_verifier`, exactly as `pool-serve` does it.
+`production_v4_share_verifier` is `RemoteVerifier`. The prover runs the unmodified upstream `ProductionV4PersistentPoolVerifier` with the same worker commands upstream `pool-serve` uses.
 
 ## Why this is not a consensus change
 
@@ -50,4 +54,6 @@ The binary is built with the upstream `production-mainnet` feature and passes th
 |---|---|
 | `crates/cmfd-node/src/pool.rs` | `spawn_pool_server`, `PoolServerConfig`, `certificate_sha256` |
 | `crates/cmfd-node/src/pool_dashboard.rs` | `spawn_pool_dashboard` (optional) |
-| `crates/cmfd-node/src/main.rs` | `configure_production_v4_pool_verifier` |
+| `crates/cmfd-node/src/production_v4_pool.rs` | `ProductionV4PersistentPoolVerifier` (prover side) |
+| `crates/cmfd-consensus/src/pow.rs` | `ConsensusPowVerifier::v4_candidate_for_network`, `verify_evaluation` (node-side self-test check) |
+| `crates/cmfd-consensus/src/wire.rs` | `encode_transaction`, `encode_forgematrix_proof` and their decoders |
