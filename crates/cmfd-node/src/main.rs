@@ -76,6 +76,9 @@ use cmfd_proof_worker::{ProductionV3VerifierRecord, VerifierWorkerConfig};
 use serde_json::json;
 use zeroize::Zeroizing;
 
+// Kraskus-Common-Foundry-Solo: solo endpoint for `run` (not upstream).
+mod kraskus_solo;
+
 const SERVICE_SUPERVISION_POLL: Duration = Duration::from_millis(50);
 const POOL_SHUTDOWN_REQUEST_BYTES: &[u8] = b"CMFD_POOL_SHUTDOWN_V1\n";
 #[cfg(feature = "production-v4")]
@@ -150,7 +153,7 @@ fn load_authenticated_rcnet_wallet_passphrase(
 #[derive(Debug, Parser)]
 #[command(
     name = "cmfd-node",
-    version,
+    version = kraskus_solo::VERSION,
     about = "Common Foundry profile-bound node runtime"
 )]
 struct Cli {
@@ -461,6 +464,8 @@ enum Command {
         /// Explicitly allow unauthenticated, unencrypted public P2P addresses.
         #[arg(long)]
         allow_public_peers: bool,
+        #[command(flatten)]
+        solo_pool: kraskus_solo::SoloPoolArgs,
     },
     /// Generate a create-new raw 32-byte withdrawal-journal authentication key.
     ExchangeWithdrawalKeygen {
@@ -1591,6 +1596,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             peers,
             no_default_seeds,
             allow_public_peers,
+            solo_pool,
         } => {
             let shutdown = install_shutdown_handler()?;
             let (peers, allow_public_peers) =
@@ -1667,6 +1673,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?);
             let rpc = spawn_rpc_server(Arc::clone(&shared), bind)?;
             let rpc_address = rpc.local_addr();
+            let solo_pool = kraskus_solo::spawn(
+                solo_pool,
+                Arc::clone(&shared),
+                production_v4_artifacts.clone(),
+            )?;
             let mut startup = json!({
                 "rpc": rpc_address.to_string(),
                 "exchange_rpc": exchange_rpc.as_ref().map(|rpc| rpc.local_addr().to_string()),
@@ -1688,12 +1699,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .expect("startup document is an object")
                     .insert("exchange_rpc_custody".to_owned(), json!("v3"));
             }
+            if let Some(solo_pool) = &solo_pool {
+                startup
+                    .as_object_mut()
+                    .expect("startup document is an object")
+                    .insert("kraskus_solo_pool".to_owned(), solo_pool.startup_json());
+            }
             println!("{}", serde_json::to_string_pretty(&startup)?);
             let service_exit = shutdown.wait_for_service_exit(|| {
                 if rpc.is_finished() {
                     Some("RPC")
                 } else if exchange_rpc.as_ref().is_some_and(|rpc| rpc.is_finished()) {
                     Some("exchange RPC")
+                } else if solo_pool.as_ref().is_some_and(|pool| pool.is_finished()) {
+                    Some("Kraskus solo pool")
                 } else if inbound.is_finished() {
                     Some("inbound P2P")
                 } else if poller.as_ref().is_some_and(|poller| poller.is_finished()) {
@@ -1702,6 +1721,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     None
                 }
             })?;
+            let solo_pool_result = match solo_pool {
+                Some(solo_pool) => solo_pool.stop(),
+                None => Ok(()),
+            };
             if let Ok(node) = shared.lock() {
                 if let Err(error) = node.persist_startup_snapshot() {
                     eprintln!("startup checkpoint not written: {error}");
@@ -1719,6 +1742,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let inbound_result = inbound.stop();
             drop(shared);
+            solo_pool_result?;
             exchange_rpc_result?;
             rpc_result?;
             poll_result?;
