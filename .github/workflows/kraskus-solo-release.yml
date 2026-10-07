@@ -66,12 +66,16 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: kraskus-solo-build-*
-      - name: Both builds are byte-identical
+      - name: Both builds are byte-identical and self-consistent (fail closed)
         run: |
+          set -euo pipefail
+          for r in a b; do (cd kraskus-solo-build-$r && sha256sum -c SHA256SUMS); done
           a=$(sha256sum kraskus-solo-build-a/cmfd-node | cut -d' ' -f1)
           b=$(sha256sum kraskus-solo-build-b/cmfd-node | cut -d' ' -f1)
           echo "build a: $a"; echo "build b: $b"
-          test "$a" = "$b"
+          test -n "$a" && test "$a" = "$b"
+          cmp kraskus-solo-build-a/SHA256SUMS kraskus-solo-build-b/SHA256SUMS
+          cmp kraskus-solo-build-a/KRASKUS-PATCH.diff kraskus-solo-build-b/KRASKUS-PATCH.diff
 
   release:
     if: startsWith(github.ref, 'refs/tags/kraskus-solo-v')
@@ -82,35 +86,58 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Tag is on main and on top of the pinned upstream commit
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 3aa5369512f47d0b3c49a49a54a0395e71e0c000 HEAD
+          git merge-base --is-ancestor HEAD origin/main
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: kraskus-solo-build-a
-          path: artifact
+          pattern: kraskus-solo-build-*
+      - name: Re-check both build artifacts (fail closed)
+        run: |
+          set -euo pipefail
+          for r in a b; do (cd kraskus-solo-build-$r && sha256sum -c SHA256SUMS); done
+          cmp kraskus-solo-build-a/cmfd-node kraskus-solo-build-b/cmfd-node
+          grep -q "\"source_commit\": \"$GITHUB_SHA\"" kraskus-solo-build-a/BUILD-INFO.json
       - name: Package
         run: |
+          set -euo pipefail
+          A=kraskus-solo-build-a
           V=${GITHUB_REF_NAME#kraskus-solo-v}
           D=kraskus-cmfd-node-solo-$V-linux-x86_64
           mkdir -p release/$D
-          cp artifact/cmfd-node artifact/BUILD-INFO.json artifact/MAINNET-LAUNCH-INFO.json artifact/VERSION.txt artifact/KRASKUS-PATCH.diff release/$D/
+          cp $A/cmfd-node $A/BUILD-INFO.json $A/MAINNET-LAUNCH-INFO.json $A/VERSION.txt $A/KRASKUS-PATCH.diff release/$D/
           cp LICENSE THIRD_PARTY_NOTICES.md KRASKUS/README.md KRASKUS/VERIFY.md release/$D/
           chmod 0755 release/$D/cmfd-node
           (cd release && tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@$(git log -1 --format=%ct) -czf $D.tar.gz $D)
           (cd release && sha256sum $D.tar.gz $D/cmfd-node $D/KRASKUS-PATCH.diff > SHA256SUMS && cat SHA256SUMS)
-      - name: Sign SHA256SUMS (Ed25519, protected environment secret)
+          test "$(sha256sum release/$D/cmfd-node | cut -d' ' -f1)" = "$(sha256sum $A/cmfd-node | cut -d' ' -f1)"
+      - name: Sign SHA256SUMS (Ed25519, protected environment secret; fail closed)
         env:
           SIGNING_KEY: ${{ secrets.KRASKUS_SOLO_RELEASE_SIGNING_KEY }}
         run: |
-          pub=$(cat KRASKUS/kraskus-solo-release.pub)
-          case "$pub" in ssh-ed25519\ *) ;; *) echo 'KRASKUS/kraskus-solo-release.pub is not an Ed25519 public key yet'; exit 1;; esac
-          test -n "$SIGNING_KEY" || { echo 'signing secret missing'; exit 1; }
+          set -euo pipefail
+          read -r pub_type pub_key _ < KRASKUS/kraskus-solo-release.pub || true
+          test "${pub_type:-}" = ssh-ed25519 || { echo 'KRASKUS/kraskus-solo-release.pub is not an Ed25519 public key'; exit 1; }
+          test -n "${SIGNING_KEY:-}" || { echo 'signing secret KRASKUS_SOLO_RELEASE_SIGNING_KEY is absent'; exit 1; }
           umask 077
           key=$(mktemp -p "$RUNNER_TEMP")
+          trap 'rm -f "$key"' EXIT
           printf '%s\n' "$SIGNING_KEY" > "$key"
-          ssh-keygen -Y sign -f "$key" -n kraskus-common-foundry-solo-release release/SHA256SUMS
+          # The private key must derive exactly the committed public key.
+          read -r der_type der_key _ < <(ssh-keygen -y -P '' -f "$key" < /dev/null) \
+            || { echo 'signing secret is not a usable unencrypted OpenSSH private key'; exit 1; }
+          test "$der_type" = ssh-ed25519 && test "$der_key" = "$pub_key" \
+            || { echo 'signing secret does not match KRASKUS/kraskus-solo-release.pub'; exit 1; }
+          ssh-keygen -Y sign -f "$key" -n kraskus-common-foundry-solo-release release/SHA256SUMS < /dev/null
           rm -f "$key"
-          printf 'kraskus-common-foundry-solo-release namespaces="kraskus-common-foundry-solo-release" %s\n' "$pub" > "$RUNNER_TEMP/allowed_signers"
+          printf 'kraskus-common-foundry-solo-release namespaces="kraskus-common-foundry-solo-release" %s %s\n' "$pub_type" "$pub_key" > "$RUNNER_TEMP/allowed_signers"
           ssh-keygen -Y verify -f "$RUNNER_TEMP/allowed_signers" -I kraskus-common-foundry-solo-release \
             -n kraskus-common-foundry-solo-release -s release/SHA256SUMS.sig < release/SHA256SUMS
+          (cd release && sha256sum -c SHA256SUMS)
       - name: GitHub pre-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -118,4 +145,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/SHA256SUMS release/SHA256SUMS.sig \
             --prerelease --verify-tag \
             --title "Kraskus Common Foundry Solo $GITHUB_REF_NAME (Dev/experimental)" \
-            --notes "Experimental Kraskus build of the official Common Foundry v1.0.8 node (MIT, upstream 3aa5369) with the Kraskus solo endpoint. Not qualified for production. Diff: KRASKUS-PATCH.diff. Verify: KRASKUS/VERIFY.md. Reproducible: KRASKUS/BUILD.md."
+            --notes "Experimental Kraskus fork build of the official Common Foundry v1.0.8 node (MIT, upstream 3aa5369) with the Kraskus solo endpoint. Not the official Common Foundry release. No consensus or miner-protocol changes. Not qualified for production until mainnet block-production qualification passes. Diff: KRASKUS-PATCH.diff. Verify: KRASKUS/VERIFY.md. Reproducible: KRASKUS/BUILD.md."
